@@ -1,132 +1,96 @@
-# Alaphia Inference Tester — Streamlit App
+# Alaphia Inference App: Deployment & Retraining Guide
 
-A tester-facing web UI for the Alaphia 5-head DeBERTa multitask model. Non-technical users can paste real journal entries or transcripts and immediately see structured predictions.
+This covers everything you need to deploy the Streamlit tester app to Streamlit Community Cloud, retrain the model, and securely manage your Hugging Face credentials.
 
 ---
 
-## Local Setup
+## 1. Deployment Instructions
+
+To successfully deploy your app to Streamlit Community Cloud, first create a *public* GitHub repository. Your GitHub repository must have the following structure:
+
+```text
+Your-Repo-Name/
+├── streamlit_app.py
+├── requirements.txt
+└── alaphia_5head_deberta/
+    ├── __init__.py
+    ├── model.py
+    ├── inference.py
+    └── ... (the rest of the python files)
+```
+
+**Deploying to Streamlit Cloud:**
+1. Go to [share.streamlit.io](https://share.streamlit.io/) and log in with GitHub.
+2. Click **New app** and select your repository, branch, and `streamlit_app.py` as the main file path.
+3. Click **Advanced settings**.
+4. In the **Secrets** box, provide your Hugging Face credentials (see Section 2).
+5. Click **Save** and **Deploy**.
+
+---
+
+## 2. Hugging Face Keys, Uploading, & Secrets
+
+Because the model (presumably) contains proprietary or sensitive data, it must be hosted privately.
+
+**How to get keys and upload the model:**
+1. Go to [huggingface.co](https://huggingface.co/) and log in.
+2. Click your profile picture -> **New Model**.
+3. Give it a name (e.g., `alaphia-5head`) and **CRITICALLY: Select "Private"**.
+4. Go to the **Files and versions** tab in your new repo, click **Add file**, and upload your `best_model.pt`.
+5. Go to your Hugging Face **Settings -> Access Tokens**. Create a new token with **Read** permissions and copy it.
+
+**Adding Keys to Streamlit Secrets:**
+When you deploy the app (or in the Streamlit Cloud dashboard under App Settings -> Secrets), paste your credentials using this exact TOML format:
+
+```toml
+HF_REPO_ID = "YourUsername/Your-Model-Name"
+HF_TOKEN = "hf_your_copied_token_here"
+```
+
+These can be found under the "Advanced settings" menu, as described earlier. Make sure to set the Python version to 3.10.
+
+*Note: Never put these secrets directly in your code or push them to GitHub.*
+
+---
+
+## 3. Retraining the Model
+
+When you receive new data, you can retrain the model locally to improve its accuracy.
+
+1. Place your updated JSON records in `alaphia_5head_deberta/training_data.json`.
+2. From your terminal at the root of the project, run:
 
 ```bash
-# From the Sereniful-push/ directory:
-pip install -r requirements-streamlit.txt
-streamlit run streamlit_app.py
+python -m alaphia_5head_deberta.train \
+  --data_path alaphia_5head_deberta/training_data.json \
+  --output_dir alaphia_5head_deberta \
+  --batch_size 16 \
+  --epochs 5 \
+  --lr 2e-5
 ```
 
-The app opens at `http://localhost:8501`.
+This will automatically evaluate the model and save the most accurate version as a new `best_model.pt` in the folder.
 
-**Python version:** 3.9+  
-**First load:** model warm-up takes ~30 s; subsequent runs are fast.
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `ALAPHIA_MODEL_PATH` | `alaphia_5head_deberta/best_model.pt` | Path to the `.pt` checkpoint. Absolute or relative to `streamlit_app.py`. |
-| `ALAPHIA_DEVICE` | *(auto)* | Force device: `cpu`, `mps`, or `cuda`. Omit to let the app pick the best available. |
-
-Set them before launching:
-
-```bash
-export ALAPHIA_MODEL_PATH=/path/to/best_model.pt
-export ALAPHIA_DEVICE=cpu
-streamlit run streamlit_app.py
+**Important Requirements Fix:** 
+If Streamlit Cloud defaults to a newer Python version (like 3.14), you must remove the strict version numbers inside `requirements.txt` to prevent Rust compilation crashes. It should look like this:
+```text
+streamlit>=1.35.0
+torch>=2.1.0
+huggingface_hub>=0.23.0
+tiktoken>=0.7.0
+sentencepiece>=0.1.99
+protobuf>=4.21.0
+setfit
+datasets
+transformers
+sentence-transformers
 ```
 
-Or inline:
+### Changing the Model / Redeployment
+If you retrain the model and decide to upload it to a *new* Hugging Face repository, or if your Hugging Face credentials change, **you must redeploy or reboot the Streamlit app.**
 
-```bash
-ALAPHIA_MODEL_PATH=/path/to/best_model.pt streamlit run streamlit_app.py
-```
-
----
-
-## Outputs
-
-| Field | Type | Notes |
-|---|---|---|
-| Emotion | single label | Leaf label + family + valence |
-| Emotion confidence | family + leaf | Both shown as percentages |
-| Need | single label | Leaf label + family |
-| Need confidence | family + leaf | Both shown as percentages |
-| Status | `unmet` / `met` / `engaged` | Colour-coded |
-| Money Theme | single label | 5-class |
-| Life Context | list of labels | Filtered by leaf threshold and max labels |
-| Life Context Families | list | Shown in expander when available |
-| Raw JSON | full dict | Debug expander on each result |
-
----
-
-## Batch Mode
-
-Enable **Batch mode** in the UI, then separate multiple entries with a line containing only `---`:
-
-```
-I had a terrible day at work and couldn't stop worrying about money.
----
-Finally paid off my credit card today — feeling relieved.
----
-My partner and I argued again about the budget.
-```
-
-Each entry renders in its own collapsible panel.
-
----
-
-## Sidebar Controls
-
-- **Leaf threshold** (default 0.85): minimum sigmoid confidence for a life-context tag to appear. Raise to see fewer, more confident tags.
-- **Family threshold** (default 0.75): minimum confidence for an active life-context family. Effective on hierarchical checkpoints.
-- **Max labels** (default 6): cap on the number of life-context tags shown.
-
----
-
-## Troubleshooting
-
-**`FileNotFoundError: Checkpoint not found`**  
-Set `ALAPHIA_MODEL_PATH` to point to `best_model.pt`.
-
-**`ModuleNotFoundError: alaphia_5head_deberta`**  
-Run the app from inside `Sereniful-push/`, or confirm that `alaphia_5head_deberta/` exists as a sibling directory.
-
-**Slow first prediction**  
-Expected — DeBERTa warm-up takes a few seconds. The model is cached for the server lifetime; subsequent predictions are fast.
-
-**`sentence-transformers` import error**  
-Required by the safety checker. Install with: `pip install sentence-transformers`.
-
-**MPS errors on Apple Silicon**  
-If you see Metal errors, force CPU: `ALAPHIA_DEVICE=cpu streamlit run streamlit_app.py`.
-
----
-
-## Deployment — Streamlit Community Cloud
-
-1. Push `Sereniful-push/` as the root of a public (or private) GitHub repo.
-2. Go to [share.streamlit.io](https://share.streamlit.io) → **New app**.
-3. Set:
-   - **Repository**: your repo
-   - **Branch**: `main`
-   - **Main file path**: `streamlit_app.py`
-4. Add secrets under **Advanced settings → Secrets**:
-   ```toml
-   ALAPHIA_MODEL_PATH = "alaphia_5head_deberta/best_model.pt"
-   ALAPHIA_DEVICE = "cpu"
-   ```
-5. Add `requirements-streamlit.txt` to the repo (already included).
-
-**Note on the checkpoint:** `best_model.pt` must be committed to the repo or fetched at startup. For large files (>100 MB), use [Git LFS](https://git-lfs.github.com) or download from a remote store (S3, GCS) at startup via a custom `startup.sh`.
-
----
-
-## Moving to an API-Backed Architecture
-
-The current setup loads the model directly in the Streamlit process. This is fine for a single tester but does not scale for concurrent users or larger deployments.
-
-For production or team-scale use, consider:
-
-- **FastAPI inference service**: wrap `load_model_for_inference` + `predict` in a FastAPI endpoint, deploy on a GPU instance (or serverless GPU), and have Streamlit call the API over HTTP. The model stays in the API process; Streamlit becomes a thin frontend.
-- **Batching**: the inference service can queue requests and call the model once per batch, improving GPU utilisation.
-- **Authentication**: add an API key or OAuth layer in front of the Streamlit app for non-public access.
-- **Caching**: for repeated identical inputs, cache predictions in Redis or a simple dict to avoid redundant forward passes.
+The old app session holds onto the old credentials and points to the old model. To update it:
+1. Go to your Streamlit Cloud dashboard. (https://share.streamlit.io/)
+2. Update your Secrets to point to the new `HF_REPO_ID`. This can be done by clicking on the three dots next to the streamlit app, clicking "settings", and then "secrets".
+3. Click the three dots (`⋮`) next to your app and hit **Reboot** (or delete and redeploy). 
+This forces the app to wake up, read the new secrets, and download the freshly trained model.
